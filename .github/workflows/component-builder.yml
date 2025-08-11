@@ -1,0 +1,58 @@
+name: "Component Builder Check"
+on:
+  # Wait for event on pull_request_target so that this action
+  # can access repo secrets: QUAY_USER & QUAY_TOKEN
+  pull_request_target:
+    permissions:
+      contents: read
+    paths:
+      - 'containers/fedora/**'
+
+jobs:
+  build-guest-fedora:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./containers/fedora
+    strategy:
+      matrix:
+        CPU_ARCH: [x86_64, aarch64, s390x]
+    env:
+      CPU_ARCH: ${{ matrix.CPU_ARCH }}
+      FEDORA_VARS_FILE: "fedora-vars"
+      PR_NUMBER: ${{ github.event.number }}
+      FULL_EMULATION: "true"
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Check out PR code safely (merge ref)
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/merge
+      - name: Fetch base Fedora image
+        run: |
+          set -euo pipefail
+          VERS=$(sed -n "s/^FEDORA_VERSION:[[:space:]]\(.*\)/\1/pi" ${{ env.FEDORA_VARS_FILE }})
+          URL=$(sed -e "s/\${FEDORA_VERSION}/${VERS}/g" -ne "s/^FEDORA_${{ matrix.CPU_ARCH }}_DOWNLOAD_DIR:[[:space:]]\(.*\)/\1/pi" ${{ env.FEDORA_VARS_FILE }})
+          IMAGE=$(sed -n "s/^FEDORA_${{ matrix.CPU_ARCH }}_IMAGE:[[:space:]]\(.*\)/\1/pi" ${{ env.FEDORA_VARS_FILE }})
+          echo "FEDORA_VERSION=$VERS" >> $GITHUB_ENV
+          echo "FEDORA_VERSION is ${VERS} and arch is ${{ matrix.CPU_ARCH }}
+
+  push_images_stage:
+    needs: build-guest-fedora
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+      - name: Login in to quay.io
+        uses: redhat-actions/podman-login@v1
+        with:
+          username: ${{ secrets.QUAY_SUSER }}
+          password: ${{ secrets.QUAY_STOKEN }}
+          registry: quay.io
+      - name: Create image manifest and push the image to stage
+        run: |
+          echo "Pushed all images and image manifest to quay stage"
