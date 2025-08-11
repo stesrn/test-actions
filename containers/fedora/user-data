@@ -1,0 +1,30 @@
+#cloud-config
+password: fedora 
+chpasswd: { expire: False }
+ssh_pwauth: true
+write_files:
+  - path: /etc/systemd/system/wait-for-cloud-init.service
+    owner: root:root
+    permissions: '0755'
+    content: |
+        [Unit]
+        Description=Wait for cloud-init to complete
+        Before=qemu-guest-agent.service
+        After=cloud-final.service
+
+        [Service]
+        Type=oneshot
+        ExecStartPre=cloud-init status --wait
+        ExecStart=/usr/bin/true
+        RemainAfterExit=true
+
+        [Install]
+        WantedBy=cloud-init.service
+runcmd:
+  - systemctl daemon-reload
+  - dnf autoremove
+  - dnf clean all
+  - systemctl enable wait-for-cloud-init
+  - systemctl enable qemu-guest-agent
+  - grubby --args="net.ifnames=0" --update-kernel=ALL
+  - shutdown
