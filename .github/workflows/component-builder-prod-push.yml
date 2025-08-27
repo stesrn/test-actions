@@ -13,16 +13,14 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     env:
-      FEDORA_VARS_FILE: "fedora-vars"
+      FEDORA_VARS_FILE: "containers/fedora/fedora-vars"
       PR_NUMBER: ${{ github.event.number }}
       FULL_EMULATION: "true"
       DEBIAN_FRONTEND: noninteractive
       PR: "12"
     steps:
-      - name: Check out PR code safely (merge ref)
+      - name: Check out code 
         uses: actions/checkout@v4
-        with:
-          ref: refs/pull/${{ env.PR_NUMBER }}/merge
       - name: Fetch base Fedora image
         run: |
           set -euo pipefail
