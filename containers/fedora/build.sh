@@ -14,9 +14,11 @@ trap cleanup EXIT
 [ -z "${CPU_ARCH}" ] && echo "Set the env variable CPU_ARCH" && exit 1
 [ -z "${PR_NUMBER}" ] && echo "Missing PR number from github action component-builder.yml" && exit 1
 
-FEDORA_VARS_FILE=fedora-vars
-FEDORA_VERSION=$(sed -n "s/^FEDORA_VERSION:[[:space:]]\(.*\)/\1/pi" ${FEDORA_VARS_FILE})
-FEDORA_IMAGE=$(sed -n "s/^FEDORA_${CPU_ARCH}_IMAGE:[[:space:]]\(.*\)/\1/pi" ${FEDORA_VARS_FILE})
+set -o allexport
+source fedora-vars
+# FEDORA_VERSION & FEDORA_${CPU_ARCH}_IMAGE are defined in fedora-vars
+IMAGE="FEDORA_${CPU_ARCH}_IMAGE"
+FEDORA_IMAGE=${!IMAGE}
 BUILD_DIR="fedora_build"
 CLOUD_INIT_ISO="cidata.iso"
 NAME="fedora${FEDORA_VERSION}"
@@ -74,9 +76,8 @@ cloud-localds ${CLOUD_INIT_ISO} user-data
 # therefore use a lower one. It should have no influence on the result.
 OS_VARIANT=$NAME
 vers_num="${FEDORA_VERSION%%[^0-9]*}"
-if [ -n "${vers_num}" ] && [ "${vers_num}" -gt 40 ] 2>/dev/null; then
-   OS_VARIANT="fedora40"
-fi
+vers_num=$((vers_num-1))
+OS_VARIANT="fedora${vers_num}"
 
 echo "Run the VM (ctrl+] to exit)"
 virt-install \
