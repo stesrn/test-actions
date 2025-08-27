@@ -19,10 +19,8 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       PR: "12"
     steps:
-      - name: Check out PR code safely (merge ref)
+      - name: Check out code 
         uses: actions/checkout@v4
-        with:
-          ref: refs/pull/${{ env.PR_NUMBER }}/merge
       - name: Fetch base Fedora image
         run: |
           set -euo pipefail
