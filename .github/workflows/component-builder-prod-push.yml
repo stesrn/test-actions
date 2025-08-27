@@ -1,6 +1,6 @@
 name: "Component Builder push to production"
 on:
-  pull_request:
+  pull_request_target:
     types:
       - 'closed'
     paths:
@@ -13,22 +13,19 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     env:
-      FEDORA_VARS_FILE: "fedora-vars"
+      FEDORA_VARS_FILE: "containers/fedora/fedora-vars"
       PR_NUMBER: ${{ github.event.number }}
       FULL_EMULATION: "true"
       DEBIAN_FRONTEND: noninteractive
       PR: "12"
     steps:
-      - name: Check out PR code safely (merge ref)
+      - name: Check out code 
         uses: actions/checkout@v4
-        with:
-          ref: refs/pull/${{ env.PR_NUMBER }}/merge
       - name: Fetch base Fedora image
         run: |
           set -euo pipefail
           VERS=$(sed -n "s/^FEDORA_VERSION:[[:space:]]\(.*\)/\1/pi" ${{ env.FEDORA_VARS_FILE }})
-          echo "FEDORA_VERSION=$VERS" >> $GITHUB_ENV
-          echo "PR number is ${{ env.PR_NUMBER }} and fedora ${{ env.FEDORA_VERSION }}"
+          echo "PR number is ${{ env.PR_NUMBER }} and fedora ${VERS}"
       - name: Install dependencies
         run: |
           sudo apt-get install -y podman
@@ -40,15 +37,16 @@ jobs:
           registry: quay.io
       - name: Create image manifest and push the image to stage
         run: |
+          VERS=$(sed -n "s/^FEDORA_VERSION:[[:space:]]\(.*\)/\1/pi" ${{ env.FEDORA_VARS_FILE }})
           PROD_REPO=quay.io/sasundar/qe-cnv-tests-fedora
           STAGE_REPO=quay.io/sasundar/qe-cnv-tests-fedora-staging
-          X86_64_STAGE_IMG=${STAGE_REPO}:${{ env.FEDORA_VERSION }}-x86_64-pr-${{ env.PR }}
-          AARCH64_STAGE_IMG=${STAGE_REPO}:${{ env.FEDORA_VERSION }}-aarch64-pr-${{ env.PR }}
-          S390_STAGE_IMG=${STAGE_REPO}:${{ env.FEDORA_VERSION }}-s390x-pr-${{ env.PR }}
-          PROD_MANIFEST=${PROD_REPO}:${{ env.FEDORA_VERSION }}
-          X86_64_PROD_IMG=${PROD_REPO}:${{ env.FEDORA_VERSION }}-x86_64
-          AARCH64_PROD_IMG=${PROD_REPO}:${{ env.FEDORA_VERSION }}-aarch64
-          S390_PROD_IMG=${PROD_REPO}:${{ env.FEDORA_VERSION }}-s390x
+          X86_64_STAGE_IMG=${STAGE_REPO}:${VERS}-x86_64-pr-${{ env.PR }}
+          AARCH64_STAGE_IMG=${STAGE_REPO}:${VERS}-aarch64-pr-${{ env.PR }}
+          S390_STAGE_IMG=${STAGE_REPO}:${VERS}-s390x-pr-${{ env.PR }}
+          PROD_MANIFEST=${PROD_REPO}:${VERS}
+          X86_64_PROD_IMG=${PROD_REPO}:${VERS}-x86_64
+          AARCH64_PROD_IMG=${PROD_REPO}:${VERS}-aarch64
+          S390_PROD_IMG=${PROD_REPO}:${VERS}-s390x
 
           # Backup the existing images, if available
           podman manifest inspect ${PROD_MANIFEST} 1>/dev/null 2>&1
