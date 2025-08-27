@@ -1,6 +1,6 @@
 name: "Component Builder push to production"
 on:
-  pull_request:
+  pull_request_target:
     types:
       - 'closed'
     paths:
@@ -13,22 +13,19 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     env:
-      FEDORA_VARS_FILE: "fedora-vars"
+      FEDORA_VARS_FILE: "containers/fedora/fedora-vars"
       PR_NUMBER: ${{ github.event.number }}
       FULL_EMULATION: "true"
       DEBIAN_FRONTEND: noninteractive
       PR: "12"
     steps:
-      - name: Check out PR code safely (merge ref)
+      - name: Check out code 
         uses: actions/checkout@v4
-        with:
-          ref: refs/pull/${{ env.PR_NUMBER }}/merge
       - name: Fetch base Fedora image
         run: |
           set -euo pipefail
           VERS=$(sed -n "s/^FEDORA_VERSION:[[:space:]]\(.*\)/\1/pi" ${{ env.FEDORA_VARS_FILE }})
-          echo "FEDORA_VERSION=$VERS" >> $GITHUB_ENV
-          echo "PR number is ${{ env.PR_NUMBER }} and fedora ${{ env.FEDORA_VERSION }}"
+          echo "PR number is ${{ env.PR_NUMBER }} and fedora ${VERS}"
       - name: Install dependencies
         run: |
           sudo apt-get install -y podman
@@ -40,49 +37,62 @@ jobs:
           registry: quay.io
       - name: Create image manifest and push the image to stage
         run: |
+          # Function to retag container images
+          # 5 args for this function are in order:
+          # source_repo, source_tag, dest_repo, dest_tag 
+          # and pr_tag (if available)
+          retag_images() {
+            SOURCE_REPO=$1
+            SOURCE_TAG=$2
+            DEST_REPO=$3
+            DEST_TAG=$4
+            # SOURCE_PR_TAG is applicable as staging repo has 'pr-tag'
+            # associated with the image
+            SOURCE_PR_TAG=""
+            if [ $# -eq 5 ]; then
+              SOURCE_PR_TAG="-$5"
+            fi
+            X86_64_SOURCE_IMG="${SOURCE_REPO}:${SOURCE_TAG}-x86_64${SOURCE_PR_TAG}"
+            AARCH64_SOURCE_IMG="${SOURCE_REPO}:${SOURCE_TAG}-aarch64${SOURCE_PR_TAG}"
+            S390_SOURCE_IMG="${SOURCE_REPO}:${SOURCE_TAG}-s390x${SOURCE_PR_TAG}"
+            X86_64_DEST_IMG="${DEST_REPO}:${SOURCE_TAG}-x86_64"
+            AARCH64_DEST_IMG="${DEST_REPO}:${DEST_TAG}-aarch64"
+            S390_DEST_IMG="${DEST_REPO}:${DEST_TAG}-s390x"
+            DEST_IMG_MANIFEST="${DEST_REPO}:${DEST_TAG}"
+
+            # Pull the images
+            podman pull ${X86_64_SOURCE_IMG}
+            podman pull ${AARCH64_SOURCE_IMG}
+            podman pull ${S390_SOURCE_IMG}
+            
+            # Tag the images
+            podman tag ${X86_64_SOURCE_IMG} ${X86_64_DEST_IMG}
+            podman tag ${AARCH64_SOURCE_IMG} ${AARCH64_DEST_IMG}
+            podman tag ${S390_SOURCE_IMG} ${S390_DEST_IMG}
+
+            # Create new multi-arch image manifest
+            podman manifest create ${DEST_IMG_MANIFEST}
+            podman manifest add ${DEST_IMG_MANIFEST} ${X86_64_DEST_IMG}
+            podman manifest add ${DEST_IMG_MANIFEST} ${AARCH64_DEST_IMG}
+            podman manifest add ${DEST_IMG_MANIFEST} ${S390_DEST_IMG}
+
+            # Push the images and the multi-arch manifest
+            podman push ${X86_64_DEST_IMG}
+            podman push ${AARCH64_DEST_IMG}
+            podman push ${S390_DEST_IMG}
+            podman manifest push ${DEST_IMG_MANIFEST} --all
+          }
+
+          FEDORA_VERSION=$(sed -n "s/^FEDORA_VERSION:[[:space:]]\(.*\)/\1/pi" ${{ env.FEDORA_VARS_FILE }})
           PROD_REPO=quay.io/sasundar/qe-cnv-tests-fedora
           STAGE_REPO=quay.io/sasundar/qe-cnv-tests-fedora-staging
-          X86_64_STAGE_IMG=${STAGE_REPO}:${{ env.FEDORA_VERSION }}-x86_64-pr-${{ env.PR }}
-          AARCH64_STAGE_IMG=${STAGE_REPO}:${{ env.FEDORA_VERSION }}-aarch64-pr-${{ env.PR }}
-          S390_STAGE_IMG=${STAGE_REPO}:${{ env.FEDORA_VERSION }}-s390x-pr-${{ env.PR }}
-          PROD_MANIFEST=${PROD_REPO}:${{ env.FEDORA_VERSION }}
-          X86_64_PROD_IMG=${PROD_REPO}:${{ env.FEDORA_VERSION }}-x86_64
-          AARCH64_PROD_IMG=${PROD_REPO}:${{ env.FEDORA_VERSION }}-aarch64
-          S390_PROD_IMG=${PROD_REPO}:${{ env.FEDORA_VERSION }}-s390x
 
-          # Backup the existing images, if available
-          podman manifest inspect ${PROD_MANIFEST} 1>/dev/null 2>&1
-          if [ $? == 0 ]; then
-              podman pull ${X86_64_PROD_IMG}
-              podman pull ${AARCH64_PROD_IMG}
-              podman pull ${S390_PROD_IMG}
-              podman tag ${X86_64_PROD_IMG} ${X86_64_PROD_IMG}-${{ env.PR }}
-              podman tag ${AARCH64_PROD_IMG} ${AARCH64_PROD_IMG}-${{ env.PR }}
-              podman tag ${S390_PROD_IMG} ${S390_PROD_IMG}-${{ env.PR }}
-              podman manifest create ${PROD_MANIFEST}-${{ env.PR }} \
-                ${X86_64_PROD_IMG}-${{ env.PR }} \
-                ${AARCH64_PROD_IMG}-${{ env.PR }} \
-                ${S390_PROD_IMG}-${{ env.PR }} 
-              podman push ${X86_64_PROD_IMG}-${{ env.PR }}
-              podman push ${AARCH64_PROD_IMG}-${{ env.PR }}
-              podman push ${S390_PROD_IMG}-${{ env.PR }}
-              podman manifest push ${PROD_MANIFEST}-${{ env.PR }} --all
+          podman manifest inspect ${PROD_MANIFEST} 1>prodimg 2>/dev/null || true
+          if [ $(grep digest prodimg|wc -l) -ne 0 ]; then
+            # Backup the existing images and multi-arch image manifest as it is available
+            # source and dest repo are the same
+            retag_images ${PROD_REPO} ${FEDORA_VERSION} ${PROD_REPO} ${FEDORA_VERSION}-pr-${{ env.PR }}
           fi
-
-          # Pull the fedora container images from stage
-          podman pull ${X86_64_STAGE_IMG}
-          podman pull ${AARCH64_STAGE_IMG}
-          podman pull ${S390_STAGE_IMG}
-
-          # Tag the container images to prod
-          podman tag ${X86_64_STAGE_IMG} ${X86_64_PROD_IMG}
-          podman tag ${AARCH64_STAGE_IMG} ${AARCH64_PROD_IMG}
-          podman tag ${S390_STAGE_IMG} ${S390_PROD_IMG}
-          podman manifest create ${PROD_MANIFEST} \
-            ${X86_64_PROD_IMG} \
-            ${AARCH64_PROD_IMG} \
-            ${S390_PROD_IMG}
-          podman push ${X86_64_PROD_IMG}
-          podman push ${AARCH64_PROD_IMG}
-          podman push ${S390_PROD_IMG}
-          podman manifest push ${PROD_MANIFEST} --all
+              
+          # Retag stage images to production
+          retag_images ${STAGE_REPO} ${FEDORA_VERSION} ${PROD_REPO} ${FEDORA_VERSION} pr-${{ env.PR }}
