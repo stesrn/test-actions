@@ -61,6 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           source ${{ env.FEDORA_VARS_FILE }}
+          echo "FEDORA_VERSION=${FEDORA_VERSION}" >> ${GITHUB_ENV}
           IMAGE=FEDORA_${{ matrix.CPU_ARCH }}_IMAGE
           URL=FEDORA_${{ matrix.CPU_ARCH }}_DOWNLOAD_DIR
           wget -q "${!URL}/${!IMAGE}"
@@ -81,24 +82,26 @@ jobs:
           registry: quay.io
       - name: Push the container image to stage
         run: |
-          QUAY_STAGE=quay.io/sasundar/qe-cnv-tests-fedora-staging
-          podman push ${QUAY_STAGE}:${{ env.FEDORA_VERSION }}-${{ matrix.CPU_ARCH}}-${{ env.PR_NUMBER }}
+          QUAY_STAGE=quay.io/openshift-cnv/qe-cnv-tests-fedora-staging
+          TAG=${{ env.FEDORA_VERSION}}-${{ matrix.CPU_ARCH }}-pr-${{ env.PR_NUMBER }}
+          DEST_IMG=quay.io/sasundar/qe-cnv-tests-fedora-staging:${{ env.FEDORA_VERSION }}-${{ matrix.CPU_ARCH}}-pr-${{ env.PR_NUMBER }}
+
+          # Extra steps to tag to sasundar repo
+          podman tag ${QUAY_STAGE}:${TAG} ${DEST_IMG}
+          podman push "${DEST_IMG}"
 
   push_multiarch_image_manifest_stage:
     needs: build-guest-fedora
     runs-on: ubuntu-latest
     steps:
-      - name: Check out code
+      - name: Check out PR code safely (merge ref)
         uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/merge
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y podman
-      - name: Download container images archive
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-          pattern: fedora-container-image-*
       - name: Login in to quay.io
         uses: redhat-actions/podman-login@v1
         with:
