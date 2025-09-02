@@ -61,6 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           source ${{ env.FEDORA_VARS_FILE }}
+          echo "FEDORA_VERSION=${FEDORA_VERSION}" >> ${GITHUB_ENV}
           IMAGE=FEDORA_${{ matrix.CPU_ARCH }}_IMAGE
           URL=FEDORA_${{ matrix.CPU_ARCH }}_DOWNLOAD_DIR
           wget -q "${!URL}/${!IMAGE}"
