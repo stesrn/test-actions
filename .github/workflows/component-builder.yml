@@ -61,6 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           source ${{ env.FEDORA_VARS_FILE }}
+          echo "FEDORA_VERSION=${FEDORA_VERSION}" >> ${GITHUB_ENV}
           IMAGE=FEDORA_${{ matrix.CPU_ARCH }}_IMAGE
           URL=FEDORA_${{ matrix.CPU_ARCH }}_DOWNLOAD_DIR
           wget -q "${!URL}/${!IMAGE}"
@@ -82,7 +83,8 @@ jobs:
       - name: Push the container image to stage
         run: |
           QUAY_STAGE=quay.io/sasundar/qe-cnv-tests-fedora-staging
-          podman push ${QUAY_STAGE}:${{ env.FEDORA_VERSION }}-${{ matrix.CPU_ARCH}}-${{ env.PR_NUMBER }}
+          TAG=${{ env.FEDORA_VERSION}}-${{ matrix.CPU_ARCH }}-pr-${{ env.PR_NUMBER }}
+          podman push "${QUAY_STAGE}:${TAG}"
 
   push_multiarch_image_manifest_stage:
     needs: build-guest-fedora
@@ -94,11 +96,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y podman
-      - name: Download container images archive
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-          pattern: fedora-container-image-*
       - name: Login in to quay.io
         uses: redhat-actions/podman-login@v1
         with:
