@@ -5,7 +5,8 @@ set -xe
 cleanup() {
     set +x
     if [ -f user-data ] && [ -n "$FEDORA_PASSWORD" ]; then
-        sed -i "s/password: $FEDORA_PASSWORD/password: $PASSWORD_PLACEHOLDER/" user-data
+        esc_pw="$(printf '%s' "${FEDORA_PASSWORD}" | sed -e 's/[\/&]/\\&/g')"
+        sed -i "s/password: ${esc_pw}/password: $PASSWORD_PLACEHOLDER/" user-data
     fi
     set -x
 }
@@ -16,21 +17,23 @@ trap cleanup EXIT
 
 set -o allexport
 source fedora-vars
+set +o allexport
+
 # FEDORA_VERSION & FEDORA_${CPU_ARCH}_IMAGE are defined in fedora-vars
 IMAGE="FEDORA_${CPU_ARCH}_IMAGE"
 FEDORA_IMAGE=${!IMAGE}
-BUILD_DIR="fedora_build"
-CLOUD_INIT_ISO="cidata.iso"
-NAME="fedora${FEDORA_VERSION}"
-FEDORA_CONTAINER_IMAGE="localhost/fedora:${FEDORA_VERSION}-${CPU_ARCH}"
-FEDORA_QUAY_STAGE="quay.io/openshift-cnv/qe-cnv-tests-fedora-staging:${FEDORA_VERSION}-${CPU_ARCH}-pr-${PR_NUMBER}"
-NO_SECURE_BOOT=""
-IMAGE_BUILD_CMD=$(which podman 2>/dev/null)
-
-if [ -z ${IMAGE_BUILD_CMD} ]; then
-    echo "No podman installed"
+if [ -z "${FEDORA_VERSION}" ] || [ -z "${FEDORA_IMAGE}" ]; then
+    echo "FEDORA_VERSION or FEDORA_${CPU_ARCH}_IMAGE not set by fedora-vars" >&2
     exit 1
 fi
+
+BUILD_DIR="fedora_build"
+CLOUD_INIT_ISO="cidata.iso"
+NAME="fedora${FEDORA_VERSION}-${CPU_ARCH}"
+FEDORA_CONTAINER_IMAGE="localhost/fedora:${FEDORA_VERSION}-${CPU_ARCH}"
+FEDORA_QUAY_STAGE="quay.io/sasundar/qe-cnv-tests-fedora-staging:${FEDORA_VERSION}-${CPU_ARCH}-pr-${PR_NUMBER}"
+NO_SECURE_BOOT=""
+IMAGE_BUILD_CMD=$(which podman)
 
 case "${CPU_ARCH}" in
     "x86_64")
@@ -70,31 +73,48 @@ else
 fi
 
 echo "Create cloud-init user data ISO"
-cloud-localds ${CLOUD_INIT_ISO} user-data
+cloud-localds "${CLOUD_INIT_ISO}" user-data
 
 # When running on CI, the latest Fedora may not be yet supported by virt-install
 # therefore use a lower one. It should have no influence on the result.
-OS_VARIANT=$NAME
+OS_VARIANT="$NAME"
 vers_num="${FEDORA_VERSION%%[^0-9]*}"
 vers_num=$((vers_num-1))
 OS_VARIANT="fedora${vers_num}"
 
 echo "Run the VM (ctrl+] to exit)"
-virt-install \
-  --memory 4096 \
-  --vcpus 2 \
-  --arch ${CPU_ARCH} \
-  --name ${NAME} \
-  --disk ${FEDORA_IMAGE},device=disk \
-  --disk ${CLOUD_INIT_ISO},device=cdrom \
-  --os-variant ${OS_VARIANT} \
-  --virt-type ${VIRT_TYPE} \
-  --graphics none \
-  --network default \
-  --noautoconsole \
-  --wait 40 \
-  ${NO_SECURE_BOOT} \
-  --import
+if [ "${CPU_ARCH}" = "aarch64" ]; then
+    virt-install \
+      --memory 4096 \
+      --vcpus 2 \
+      --arch "${CPU_ARCH}" \
+      --name "${NAME}" \
+      --disk "${FEDORA_IMAGE}",device=disk \
+      --disk "${CLOUD_INIT_ISO}",device=cdrom \
+      --os-variant "${OS_VARIANT}" \
+      --virt-type "${VIRT_TYPE}" \
+      --graphics none \
+      --network default \
+      --noautoconsole \
+      --wait 40 \
+      --boot uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=no \
+      --import
+else
+    virt-install \
+      --memory 4096 \
+      --vcpus 2 \
+      --arch "${CPU_ARCH}" \
+      --name "${NAME}" \
+      --disk "${FEDORA_IMAGE}",device=disk \
+      --disk "${CLOUD_INIT_ISO}",device=cdrom \
+      --os-variant "${OS_VARIANT}" \
+      --virt-type "${VIRT_TYPE}" \
+      --graphics none \
+      --network default \
+      --noautoconsole \
+      --wait 40 \
+      --import
+fi
 
 # Prepare VM image
 virt-sysprep -d "${NAME}" --operations machine-id,bash-history,logfiles,tmp-files,net-hostname,net-hwaddr
@@ -108,7 +128,7 @@ fi
 
 rm -f "${CLOUD_INIT_ISO}"
 
-mkdir -p ${BUILD_DIR}
+mkdir -p "${BUILD_DIR}"
 echo "Snapshot image"
 qemu-img convert -c -O qcow2 "${FEDORA_IMAGE}" "${BUILD_DIR}/${FEDORA_IMAGE}"
 
@@ -116,17 +136,17 @@ echo "Create Dockerfile"
 
 cat <<EOF > "${BUILD_DIR}/Dockerfile"
 FROM scratch
-COPY --chown=107:107 ${FEDORA_IMAGE} /disk/
+COPY --chown=107:107 "${FEDORA_IMAGE}" /disk/
 EOF
 
 pushd "${BUILD_DIR}"
 echo "Build container image"
-${IMAGE_BUILD_CMD} build -f Dockerfile --arch="${CPU_ARCH_CODE}" -t "${FEDORA_CONTAINER_IMAGE}" .
+"${IMAGE_BUILD_CMD}" build -f Dockerfile --arch="${CPU_ARCH_CODE}" -t "${FEDORA_CONTAINER_IMAGE}" .
 
 # Tag the image
-${IMAGE_BUILD_CMD} tag "${FEDORA_CONTAINER_IMAGE}" "${FEDORA_QUAY_STAGE}"
+"${IMAGE_BUILD_CMD}" tag "${FEDORA_CONTAINER_IMAGE}" "${FEDORA_QUAY_STAGE}"
 
 echo "Save container image as TAR"
-${IMAGE_BUILD_CMD} save --output "fedora-image-${CPU_ARCH}.tar" "${FEDORA_QUAY_STAGE}"
+"${IMAGE_BUILD_CMD}" save --output "fedora-image-${CPU_ARCH}.tar" "${FEDORA_QUAY_STAGE}"
 popd
 echo "Fedora image located in ${BUILD_DIR}/"
